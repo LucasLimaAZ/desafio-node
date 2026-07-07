@@ -8,48 +8,60 @@ export interface ProducerService {
   }>;
 }
 
-function buildIntervals(rows: Array<{ producer: string; year: number }>) {
-  const producerMap = new Map<string, number[]>();
+type WinnerRow = {
+  producer: string;
+  year: number;
+};
 
-  for (const row of rows) {
-    if (!producerMap.has(row.producer)) {
-      producerMap.set(row.producer, []);
-    }
-    producerMap.get(row.producer)?.push(row.year);
-  }
-
-  const intervals: ProducerInterval[] = [];
-  for (const [producer, years] of producerMap.entries()) {
-    for (let i = 1; i < years.length; i += 1) {
-      intervals.push(
-        new ProducerInterval({
-          producer,
-          interval: years[i] - years[i - 1],
-          previousWin: years[i - 1],
-          followingWin: years[i],
-        }),
-      );
-    }
-  }
-
-  return intervals;
+function toProducerInterval(
+  producer: string,
+  previousWin: number,
+  followingWin: number,
+): ProducerInterval {
+  return new ProducerInterval({
+    producer,
+    interval: followingWin - previousWin,
+    previousWin,
+    followingWin,
+  });
 }
 
 export async function getProducerIntervals(db: any) {
-  const rows = await getWinnerRows(db);
-  const intervals = buildIntervals(rows);
+  const rows = (await getWinnerRows(db)) as WinnerRow[];
+  const min: ProducerInterval[] = [];
+  const max: ProducerInterval[] = [];
+  let minInterval: number | null = null;
+  let maxInterval: number | null = null;
+  const lastWins = new Map<string, number>();
 
-  if (intervals.length === 0) {
-    return { min: [], max: [] };
+  for (const row of rows) {
+    const previousWin = lastWins.get(row.producer);
+
+    if (previousWin !== undefined) {
+      const interval = row.year - previousWin;
+      const candidate = toProducerInterval(row.producer, previousWin, row.year);
+
+      if (minInterval === null || interval < minInterval) {
+        minInterval = interval;
+        min.length = 0;
+        min.push(candidate);
+      } else if (interval === minInterval) {
+        min.push(candidate);
+      }
+
+      if (maxInterval === null || interval > maxInterval) {
+        maxInterval = interval;
+        max.length = 0;
+        max.push(candidate);
+      } else if (interval === maxInterval) {
+        max.push(candidate);
+      }
+    }
+
+    lastWins.set(row.producer, row.year);
   }
 
-  const minInterval = Math.min(...intervals.map((item) => item.interval));
-  const maxInterval = Math.max(...intervals.map((item) => item.interval));
-
-  return {
-    min: intervals.filter((item) => item.interval === minInterval),
-    max: intervals.filter((item) => item.interval === maxInterval),
-  };
+  return { min, max };
 }
 
 export function createProducerService(db: any): ProducerService {
